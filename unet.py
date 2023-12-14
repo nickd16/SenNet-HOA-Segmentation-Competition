@@ -45,7 +45,8 @@ class UNET(nn.Module):
         self.DecoderLayer3 = DecoderBlock(256, 128)
 
     def forward(self, x):
-        x = overlap_tiles(x, x.shape[2], x.shape[3])
+        h, w = x.shape[2:]
+        x = overlap_tiles(x, h, w)
         Layer1 = self.EncoderLayer1(x)
         Layer2 = self.EncoderLayer2(Layer1)
         Layer3 = self.EncoderLayer3(Layer2)
@@ -59,12 +60,23 @@ class UNET(nn.Module):
         x = self.DecoderLayer3(x)
         x = torch.concat([tf.center_crop(Layer1, (x.shape[2], x.shape[3])), x], dim=1)
         x = self.relu(self.out2(self.relu(self.out1(x))))
-        return self.out3(x)
+        x = self.out3(x)
+        return pad(x, h, w)
 
-def overlap_tiles(x, dimx, dimy):
-    height, width = input_dim(dimx), input_dim(dimy)
-    padx, pady = (height-dimx)//2, (width-dimy)//2
-    x = F.pad(x, [pady, pady, padx, padx], mode='reflect')
+def overlap_tiles(x, dimh, dimw):
+    height, width = input_dim(dimh), input_dim(dimw)
+    padleft, padtop = (height-dimh)//2, (width-dimw)//2
+    padright = padleft if (height-dimh) % 2 == 0 else padleft+1
+    padbottom = padtop if (width-dimw) % 2 == 0 else padtop+1
+    x = F.pad(x, [padtop, padbottom, padleft, padright], mode='reflect')
+    return x
+
+def pad(x, h, w):
+    height, width = x.shape[2:]
+    padleft, padtop = (h-height)//2, (w-width)//2
+    padright = padleft if (h-height) % 2 == 0 else padleft+1
+    padbottom = padtop if (w-width) % 2 == 0 else padtop+1
+    x = F.pad(x, [padtop, padbottom, padleft, padright], 'constant', 0)
     return x
 
 def output_dim(input_dim, layers=4):
@@ -75,7 +87,7 @@ def output_dim(input_dim, layers=4):
     return input_dim-4
 
 def input_dim(output_dim, layers=4):
-    output_dim = math.ceil((output_dim-4)/16)*16+4
+    output_dim = int((output_dim-4)/16)*16+4
     output_dim += 4
     for _ in range(layers):
         output_dim = math.ceil((output_dim//2))+4 
@@ -84,7 +96,7 @@ def input_dim(output_dim, layers=4):
     return output_dim
 
 def main():
-    x = torch.zeros((1, 1, 912, 1303)).cuda()
+    x = torch.zeros((1, 1, 1511, 1041)).cuda()
     model = UNET().cuda()
     print(model(x).shape)
 
