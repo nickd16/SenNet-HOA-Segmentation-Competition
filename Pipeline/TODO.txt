@@ -1,4 +1,3 @@
--split data into train/val/test
 -write test model
 -test code
 

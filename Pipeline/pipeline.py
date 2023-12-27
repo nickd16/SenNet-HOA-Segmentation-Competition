@@ -1,19 +1,21 @@
 from torch.utils.data import Dataset
 from torch.utils.data import DataLoader
-from typing import List, Dict, Callable
+from torch.utils.data import random_split
+from typing import List, Dict, Callable, Any
+import torch
 
 class Pipeline():
     def __init__(self, dset: Dataset, transforms : List[Callable], 
             loader_kwargs : Dict[str, Any], dset_split: List[float]):
-    """
-    dset: Dataset, torch Dataset representing the dataset
-          Dataset[i] should return a tuple (features: List of features, label)
-    transforms: List, List of functionals which will be called in this order
-                when loading each dataset item through the dataloader
-    loader_kwargs: Dict[kwarg, value] a dictionary containing the 
-                   arguements to the dataloader
-    dset_split: List[float], list describing the train, val, test split
-    """
+        """
+        dset: Dataset, torch Dataset representing the dataset
+              Dataset[i] should return a tuple (features: List of features, label)
+        transforms: List, List of functionals which will be called in this order
+                    when loading each dataset item through the dataloader
+        loader_kwargs: Dict[kwarg, value] a dictionary containing the 
+                       arguements to the dataloader
+        dset_split: List[float], list describing the train, val, test split
+        """
         self.train_set, self.test_set, self.val_set  = \
                         random_split(dset, dset_split)
         self.train_loader = DataLoader(self.train_set, 
@@ -25,7 +27,8 @@ class Pipeline():
 
     def create_collate(self, transforms:List) -> Callable:
         #Features can be an array of more than one feature
-        def collate((features, labels)):
+        def collate(model_input):
+            features, labels = model_input
             for transform in transforms:
                 features = [transform(feature) for feature in features]
                 labels   = transform(labels)
@@ -35,13 +38,13 @@ class Pipeline():
     def train(self, model : Callable, epochs:int,  optim: torch.optim.Optimizer, 
                             loss_fn: Callable, eval_fn: Callable, eval_frequency: int, 
                             loss_frequency: int, display_metric: Callable=None) -> None:
-            """
-            eval_fn: Function which will evaluate the model and return a list of metrics
-                     in a predefined order
-            display_metric: Displays the latest metrics to the terminal
-            eval_frequency: how often the model is evaluated
-            loss_frequency: how often the loss is printed
-            """
+        """
+        eval_fn: Function which will evaluate the model and return a list of metrics
+                 in a predefined order
+        display_metric: Displays the latest metrics to the terminal
+        eval_frequency: how often the model is evaluated
+        loss_frequency: how often the loss is printed
+        """
         metrics = []
         running_loss = 0
         for e in range(epochs):
@@ -60,8 +63,3 @@ class Pipeline():
             if scheduler != None:
                 scheduler.step()
         return metrics
-
-            
-
-
-
