@@ -5,7 +5,7 @@ import torchvision.transforms.functional as tf
 import math
 
 class EncoderBlock(nn.Module):
-    def __init__(self, dim1, dim2, activation='relu', padding=False):
+    def __init__(self, dim1, dim2, activation='relu'):
         super().__init__()
         if activation == 'leakyrelu':
             self.activ = nn.LeakyReLU(inplace=True)
@@ -14,15 +14,12 @@ class EncoderBlock(nn.Module):
         else:
             self.activ = nn.ReLU(inplace=True)
         self.maxpool = nn.MaxPool2d(2,2)
-        if padding:
-            self.conv1 = nn.Conv2d(dim1, dim2, 3, 1, 1)
-            self.conv2 = nn.Conv2d(dim2, dim2, 3, 1, 1)
-        else:
-            self.conv1 = nn.Conv2d(dim1, dim2, 3)
-            self.conv2 = nn.Conv2d(dim2, dim2, 3)
+        self.conv1 = nn.Conv2d(dim1, dim2, 3)
+        self.conv2 = nn.Conv2d(dim2, dim2, 3)
 
     def forward(self, x):
-        return self.maxpool(self.activ(self.conv2(self.activ(self.conv1(x)))))
+        x = self.activ(self.conv2(self.activ(self.conv1(x))))
+        return self.maxpool(x), x
 
 class DecoderBlock(nn.Module):
     def __init__(self, dim1, dim2, activation='relu'):
@@ -66,25 +63,21 @@ class UNET(nn.Module):
     def forward(self, x):
         h, w = x.shape[2:]
         x = overlap_tiles(x, h, w)
-        Layer1 = self.EncoderLayer1(x)
-        Layer2 = self.EncoderLayer2(Layer1)
-        Layer3 = self.EncoderLayer3(Layer2)
-        Layer4 = self.EncoderLayer4(Layer3)
-        x = self.upconv1(self.activ(self.conv5_2(self.activ(self.conv5_1(Layer4)))))
-        x = torch.concat([tf.center_crop(Layer4, (x.shape[2], x.shape[3])), x], dim=1)
-        x = self.DecoderLayer1(x)
-        x = torch.concat([tf.center_crop(Layer3, (x.shape[2], x.shape[3])), x], dim=1)
-        x = self.DecoderLayer2(x)
-        x = torch.concat([tf.center_crop(Layer2, (x.shape[2], x.shape[3])), x], dim=1)
-        x = self.DecoderLayer3(x)
-        x = torch.concat([tf.center_crop(Layer1, (x.shape[2], x.shape[3])), x], dim=1)
+        x, Layer1 = self.EncoderLayer1(x)
+        x, Layer2 = self.EncoderLayer2(x)
+        x, Layer3 = self.EncoderLayer3(x)
+        x, Layer4 = self.EncoderLayer4(x)
+        x = self.upconv1(self.activ(self.conv5_2(self.activ(self.conv5_1(x)))))
+        x = self.DecoderLayer1(torch.cat([tf.center_crop(Layer4, (x.shape[2], x.shape[3])), x], dim=1))
+        x = self.DecoderLayer2(torch.cat([tf.center_crop(Layer3, (x.shape[2], x.shape[3])), x], dim=1))
+        x = self.DecoderLayer3(torch.cat([tf.center_crop(Layer2, (x.shape[2], x.shape[3])), x], dim=1))
+        x = torch.cat([tf.center_crop(Layer1, (x.shape[2], x.shape[3])), x], dim=1)
         x = self.activ(self.out2(self.activ(self.out1(x))))
         x = self.out3(x)
         x = F.sigmoid(x)
         return pad(x, h, w)
 
 def overlap_tiles(x, dimh, dimw):
-    height, width = input_dim(dimh), input_dim(dimw)
     height, width = input_dim(dimh), input_dim(dimw)
     padleft, padtop = (height-dimh)//2, (width-dimw)//2
     padright = padleft if (height-dimh) % 2 == 0 else padleft+1
@@ -117,7 +110,7 @@ def input_dim(output_dim, layers=4):
     return output_dim
 
 def main():
-    x = torch.zeros((1, 1, 1928,1928)).cuda()
+    x = torch.zeros((1, 1, 572, 572)).cuda()
     model = UNET().cuda()
     print(model(x).shape)
 
