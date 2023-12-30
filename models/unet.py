@@ -5,8 +5,9 @@ import torchvision.transforms.functional as tf
 import math
 
 class EncoderBlock(nn.Module):
-    def __init__(self, dim1, dim2, activation='relu'):
+    def __init__(self, dim1, dim2, activation, norm):
         super().__init__()
+        self.norm = norm
         if activation == 'leakyrelu':
             self.activ = nn.LeakyReLU(inplace=True)
         elif activation == 'gelu':
@@ -14,31 +15,40 @@ class EncoderBlock(nn.Module):
         else:
             self.activ = nn.ReLU(inplace=True)
         self.maxpool = nn.MaxPool2d(2,2)
+        self.batchnorm = nn.BatchNorm2d(dim2)
         self.conv1 = nn.Conv2d(dim1, dim2, 3)
         self.conv2 = nn.Conv2d(dim2, dim2, 3)
 
     def forward(self, x):
-        x = self.activ(self.conv2(self.activ(self.conv1(x))))
+        if self.norm:
+            x = self.activ(self.batchnorm(self.conv2(self.activ(self.batchnorm(self.conv1(x))))))
+        else:
+            x = self.activ(self.conv2(self.activ(self.conv1(x))))
         return self.maxpool(x), x
 
 class DecoderBlock(nn.Module):
-    def __init__(self, dim1, dim2, activation='relu'):
+    def __init__(self, dim1, dim2, activation, norm):
         super().__init__()
+        self.norm = norm
         if activation == 'leakyrelu':
             self.activ = nn.LeakyReLU(inplace=True)
         elif activation == 'gelu':
             self.activ = nn.GELU()
         else:
             self.activ = nn.ReLU(inplace=True)
+        self.batchnorm = nn.BatchNorm2d(dim2)
         self.upconv = nn.ConvTranspose2d(dim2, int(dim2//2), 2, 2)
         self.conv1 = nn.Conv2d(dim1, dim2, 3)
         self.conv2 = nn.Conv2d(dim2, dim2, 3)
 
     def forward(self, x):
-        return self.upconv(self.activ(self.conv2(self.activ(self.conv1(x)))))
+        if self.norm:
+            return self.upconv(self.activ(self.batchnorm(self.conv2(self.activ(self.batchnorm(self.conv1(x)))))))
+        else:
+            return self.upconv(self.activ(self.conv2(self.activ(self.conv1(x)))))
 
 class UNET(nn.Module):
-    def __init__(self, activation='relu'):
+    def __init__(self, activation='relu', norm=True):
         super().__init__()
         if activation == 'leakyrelu':
             self.activ = nn.LeakyReLU(inplace=True)
@@ -46,19 +56,22 @@ class UNET(nn.Module):
             self.activ = nn.GELU()
         else:
             self.activ = nn.ReLU(inplace=True)
+        self.norm = norm
+        self.batchnorm1 = nn.BatchNorm2d(1024)
+        self.batchnorm2 = nn.BatchNorm2d(64)
         self.conv5_1 = nn.Conv2d(512, 1024, 3)
         self.conv5_2 = nn.Conv2d(1024, 1024, 3)
         self.out1 = nn.Conv2d(128, 64, 3)
         self.out2 = nn.Conv2d(64, 64, 3)
         self.out3 = nn.Conv2d(64, 1, 1)
         self.upconv1 = nn.ConvTranspose2d(1024, 512, 2, 2)
-        self.EncoderLayer1 = EncoderBlock(1, 64)
-        self.EncoderLayer2 = EncoderBlock(64, 128)
-        self.EncoderLayer3 = EncoderBlock(128, 256)
-        self.EncoderLayer4 = EncoderBlock(256, 512)
-        self.DecoderLayer1 = DecoderBlock(1024, 512)
-        self.DecoderLayer2 = DecoderBlock(512, 256)
-        self.DecoderLayer3 = DecoderBlock(256, 128)
+        self.EncoderLayer1 = EncoderBlock(1, 64, activation, norm)
+        self.EncoderLayer2 = EncoderBlock(64, 128, activation, norm)
+        self.EncoderLayer3 = EncoderBlock(128, 256, activation, norm)
+        self.EncoderLayer4 = EncoderBlock(256, 512, activation, norm)
+        self.DecoderLayer1 = DecoderBlock(1024, 512, activation, norm)
+        self.DecoderLayer2 = DecoderBlock(512, 256, activation, norm)
+        self.DecoderLayer3 = DecoderBlock(256, 128, activation, norm)
 
     def forward(self, x):
         h, w = x.shape[2:]
@@ -67,12 +80,18 @@ class UNET(nn.Module):
         x, Layer2 = self.EncoderLayer2(x)
         x, Layer3 = self.EncoderLayer3(x)
         x, Layer4 = self.EncoderLayer4(x)
-        x = self.upconv1(self.activ(self.conv5_2(self.activ(self.conv5_1(x)))))
+        if self.norm:
+            x = self.upconv1(self.activ(self.batchnorm1(self.conv5_2(self.activ(self.batchnorm1(self.conv5_1(x)))))))
+        else:
+            x = self.upconv1(self.activ(self.conv5_2(self.activ(self.conv5_1(x)))))
         x = self.DecoderLayer1(torch.cat([tf.center_crop(Layer4, (x.shape[2], x.shape[3])), x], dim=1))
         x = self.DecoderLayer2(torch.cat([tf.center_crop(Layer3, (x.shape[2], x.shape[3])), x], dim=1))
         x = self.DecoderLayer3(torch.cat([tf.center_crop(Layer2, (x.shape[2], x.shape[3])), x], dim=1))
         x = torch.cat([tf.center_crop(Layer1, (x.shape[2], x.shape[3])), x], dim=1)
-        x = self.activ(self.out2(self.activ(self.out1(x))))
+        if self.norm:
+            x = self.activ(self.out2(self.activ(self.out1(x))))
+        else:
+            x = self.activ(self.batchnorm2(self.out2(self.activ(self.batchnorm2(self.out1(x))))))
         x = self.out3(x)
         x = F.sigmoid(x)
         return pad(x, h, w)
@@ -111,7 +130,7 @@ def input_dim(output_dim, layers=4):
 
 def main():
     x = torch.zeros((1, 1, 572, 572)).cuda()
-    model = UNET().cuda()
+    model = UNET(activation='gelu', norm=True).cuda()
     print(model(x).shape)
 
 if __name__ == '__main__':
